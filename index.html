@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Handlebars Template Viewer</title>
+<script src="https://cdn.jsdelivr.net/npm/handlebars@4.7.8/dist/handlebars.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --ink: #1c1f23; --muted: #6b7280;
+    --line: #d9dde3; --accent: #2563eb; --err: #b91c1c; --errbg: #fee2e2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181d; --panel: #1e2126; --ink: #e6e8eb; --muted: #9aa3ad;
+      --line: #333941; --accent: #60a5fa; --err: #fca5a5; --errbg: #3b1d1d;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; flex-direction: column; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 14px; font-weight: 600; margin: 0 8px 0 0; }
+  #fileName { color: var(--muted); font-size: 12px; margin-right: auto; }
+  button, .btn {
+    font: inherit; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--panel); color: var(--ink); cursor: pointer;
+  }
+  button:hover:not(:disabled), .btn:hover { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  main { flex: 1; display: flex; min-height: 0; }
+  #panel { width: 380px; min-width: 220px; display: flex; flex-direction: column;
+           background: var(--panel); border-right: 1px solid var(--line); }
+  #splitter { width: 5px; cursor: col-resize; background: var(--line); flex: none; }
+  #stage { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  iframe { flex: 1; width: 100%; border: 0; background: #fff; }
+
+  .tabs { display: flex; border-bottom: 1px solid var(--line); }
+  .tabs button { border: 0; border-radius: 0; border-bottom: 2px solid transparent;
+                 background: none; padding: 8px 12px; color: var(--muted); }
+  .tabs button.on { color: var(--ink); border-bottom-color: var(--accent); }
+  .tabpane { flex: 1; overflow: auto; padding: 12px; display: none; }
+  .tabpane.on { display: block; }
+
+  fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 10px; padding: 8px 10px 2px; }
+  legend { font-weight: 600; font-size: 12px; padding: 0 4px; }
+  .field { margin-bottom: 10px; }
+  .field > label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 3px; }
+  .req { color: var(--err); }
+  .hint { font-size: 11px; color: var(--muted); margin: 2px 0 0; }
+  input, select, textarea {
+    font: inherit; width: 100%; padding: 5px 7px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--bg); color: var(--ink);
+  }
+  input[type=checkbox] { width: auto; }
+  input[type=color] { padding: 2px; height: 30px; }
+  textarea { min-height: 70px; resize: vertical; font-family: ui-monospace, Consolas, monospace; }
+  .bool { display: flex; align-items: center; gap: 6px; }
+  .bool label { font-size: 12px; font-weight: 600; margin: 0; }
+  .row { display: flex; gap: 6px; align-items: flex-start; margin-bottom: 6px; }
+  .row > :first-child { flex: 1; margin-bottom: 0; }
+  .mini { padding: 3px 8px; font-size: 12px; line-height: 1.2; }
+  #jsonPane textarea { min-height: 60vh; }
+
+  #status { padding: 8px 12px; font-size: 12px; white-space: pre-wrap;
+            font-family: ui-monospace, Consolas, monospace; background: var(--errbg);
+            color: var(--err); border-bottom: 1px solid var(--line); display: none; }
+  #status.on { display: block; }
+  #drop { position: fixed; inset: 0; display: none; place-items: center; z-index: 9;
+          background: rgba(37,99,235,.15); border: 3px dashed var(--accent); font-size: 20px; }
+  #drop.on { display: grid; }
+  .empty { color: var(--muted); padding: 24px; text-align: center; }
+  .empty code { background: var(--bg); padding: 1px 4px; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Handlebars Template Viewer</h1>
+  <button id="openBtn" class="primary">Open template…</button>
+  <button id="reloadBtn" disabled title="Re-read the file from disk">Reload</button>
+  <select id="fileSel" hidden></select>
+  <span id="fileName">no file loaded</span>
+  <button id="saveBtn" disabled>Save rendered HTML</button>
+  <input id="fileInput" type="file" multiple accept=".html,.htm,.hbs,.handlebars,.json,.css,.js,.png,.jpg,.jpeg,.gif,.svg,.webp" hidden>
+</header>
+
+<div id="status"></div>
+
+<main>
+  <div id="panel">
+    <div class="tabs">
+      <button data-tab="form" class="on">Form</button>
+      <button data-tab="json">Data (JSON)</button>
+      <button data-tab="schema">Schema</button>
+    </div>
+    <div id="formPane" class="tabpane on">
+      <div class="empty">Open an HTML file to begin.<br><br>
+        Add controls by embedding a schema:<br>
+        <code>&lt;script type="application/schema+json"&gt;</code><br>
+        (inline JSON, or <code>src="model.schema.json"</code> — select that file too)
+      </div>
+    </div>
+    <div id="jsonPane" class="tabpane">
+      <textarea id="jsonBox" spellcheck="false"></textarea>
+      <button id="applyJson" class="mini" style="margin-top:6px">Apply</button>
+    </div>
+    <div id="schemaPane" class="tabpane"><pre id="schemaBox" style="white-space:pre-wrap;font-size:12px"></pre></div>
+  </div>
+  <div id="splitter"></div>
+  <!-- sandbox omits allow-top-navigation so a link in the template can't navigate the viewer away -->
+  <div id="stage"><iframe id="preview"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"></iframe></div>
+</main>
+
+<div id="drop">Drop your HTML file (and any assets) here</div>
+
+<script>
+/* ------------------------------------------------------------------ state */
+const S = {
+  files: new Map(),   // lowercase basename -> { file, url }
+  handles: new Map(), // lowercase basename -> FileSystemFileHandle
+  templateName: '',   // basename of the active template
+  source: '',         // template text, schema script removed
+  schema: null,
+  data: {},
+  rendered: '',
+  note: '',        // sticky message about the loaded files (not render errors)
+  helpers: []      // names registered from a selected .js file
+};
+
+const $ = id => document.getElementById(id);
+const status = (msg) => { $('status').textContent = msg || ''; $('status').classList.toggle('on', !!msg); };
+
+/* ------------------------------------------------------------- file input */
+$('openBtn').onclick = async () => {
+  if (window.showOpenFilePicker) {
+    try {
+      const handles = await window.showOpenFilePicker({ multiple: true });
+      await loadHandles(handles);
+      return;
+    } catch (e) { if (e.name === 'AbortError') return; }
+  }
+  $('fileInput').click();
+};
+$('fileInput').onchange = e => loadFiles([...e.target.files]);
+$('reloadBtn').onclick = () => loadHandles([...S.handles.values()], S.templateName);
+
+async function loadHandles(handles, keep) {
+  S.handles.clear();
+  for (const h of handles) S.handles.set(h.name.toLowerCase(), h);
+  const files = await Promise.all(handles.map(h => h.getFile()));
+  $('reloadBtn').disabled = false;
+  loadFiles(files, keep);
+}
+
+function loadFiles(files, keep) {
+  for (const { url } of S.files.values()) URL.revokeObjectURL(url);
+  S.files.clear();
+  for (const f of files) S.files.set(f.name.toLowerCase(), { file: f, url: URL.createObjectURL(f) });
+
+  const htmls = files.filter(f => /\.(html?|hbs|handlebars)$/i.test(f.name));
+  if (!htmls.length) return status('No .html / .hbs file in the selection.');
+
+  const sel = $('fileSel');
+  sel.innerHTML = '';
+  htmls.forEach(f => sel.add(new Option(f.name, f.name)));
+  sel.hidden = htmls.length < 2;
+  sel.value = (keep && htmls.some(f => f.name === keep)) ? keep : htmls[0].name;
+  sel.onchange = () => useTemplate(sel.value);
+  useTemplate(sel.value);
+}
+
+/* Any selected .js file that registers helpers is run against Handlebars first,
+   so templates that depend on custom helpers still render. */
+async function loadHelpers() {
+  S.helpers.forEach(n => Handlebars.unregisterHelper(n));
+  S.helpers = [];
+  let note = '';
+  for (const [name, { file }] of S.files) {
+    if (!name.endsWith('.js')) continue;
+    const code = await file.text();
+    if (!/Handlebars\s*\.\s*register(Helper|Partial)/.test(code)) continue;
+    const before = new Set(Object.keys(Handlebars.helpers));
+    try { new Function('Handlebars', code)(Handlebars); }
+    catch (e) { note = `Helper file ${file.name}: ${e.message}`; continue; }
+    S.helpers.push(...Object.keys(Handlebars.helpers).filter(k => !before.has(k)));
+  }
+  return note;
+}
+
+async function useTemplate(name) {
+  S.templateName = name;
+  $('fileName').textContent = name;
+  const helperNote = await loadHelpers();
+  const text = await S.files.get(name.toLowerCase()).file.text();
+  const { source, schema, note } = await extractSchema(text);
+  S.source = source;
+  S.schema = schema;
+  $('schemaBox').textContent = schema ? JSON.stringify(schema, null, 2) : 'No schema found in this template.';
+  S.data = schema ? defaultFor(schema) : {};
+  S.note = [helperNote, note].filter(Boolean).join('\n');
+  status(S.note);
+  buildForm();
+  render();
+}
+
+/* -------------------------------------------- find & strip the schema tag */
+async function extractSchema(text) {
+  const re = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+  let m, note = '';
+  while ((m = re.exec(text))) {
+    const attrs = parseAttrs(m[1]);
+    const type = (attrs.type || '').toLowerCase();
+    const looksSchema = type.includes('schema+json') ||
+      (type.includes('json') && /schema/i.test((attrs.id || '') + ' ' + (attrs.src || '') + ' ' + ('data-schema' in attrs ? 'schema' : '')));
+    if (!looksSchema) continue;
+
+    const source = text.slice(0, m.index) + text.slice(m.index + m[0].length);
+    let raw = m[2].trim();
+    if (attrs.src) {
+      const entry = S.files.get(attrs.src.split(/[\\/]/).pop().toLowerCase());
+      if (!entry) return { source, schema: null, note: `Schema file "${attrs.src}" was not in the selection — open it alongside the template.` };
+      raw = await entry.file.text();
+    }
+    try { return { source, schema: JSON.parse(raw), note: '' }; }
+    catch (e) { return { source, schema: null, note: 'Schema is not valid JSON: ' + e.message }; }
+  }
+  return { source: text, schema: null, note };
+}
+
+function parseAttrs(str) {
+  const out = {};
+  for (const a of str.matchAll(/([\w:-]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s>]+))?/g))
+    out[a[1].toLowerCase()] = (a[2] || '').replace(/^["']|["']$/g, '');
+  return out;
+}
+
+/* ----------------------------------------------------------- schema utils */
+function deref(s) {
+  let guard = 0;
+  while (s && s.$ref && guard++ < 20) {
+    const path = s.$ref.replace(/^#\/?/, '').split('/').filter(Boolean).map(p => p.replace(/~1/g, '/').replace(/~0/g, '~'));
+    let node = S.schema;
+    for (const p of path) node = node && node[p];
+    if (!node) return s;
+    s = { ...node, ...Object.fromEntries(Object.entries(s).filter(([k]) => k !== '$ref')) };
+  }
+  return s || {};
+}
+
+function typeOf(s) {
+  if (Array.isArray(s.type)) return s.type.find(t => t !== 'null') || 'string';
+  if (s.type) return s.type;
+  if (s.properties) return 'object';
+  if (s.items) return 'array';
+  if (s.enum) return typeof s.enum[0] === 'number' ? 'number' : 'string';
+  return 'string';
+}
+
+function defaultFor(s) {
+  s = deref(s);
+  if ('default' in s) return structuredClone(s.default);
+  if (Array.isArray(s.examples) && s.examples.length) return structuredClone(s.examples[0]);
+  switch (typeOf(s)) {
+    case 'object': {
+      const o = {};
+      for (const [k, v] of Object.entries(s.properties || {})) o[k] = defaultFor(v);
+      return o;
+    }
+    case 'array': return [];
+    case 'boolean': return false;
+    case 'integer': case 'number': return s.enum ? s.enum[0] : (typeof s.minimum === 'number' ? s.minimum : 0);
+    default: return s.enum ? s.enum[0] : (s.const ?? '');
+  }
+}
+
+/* ------------------------------------------------------------- form build */
+const getAt = p => p.reduce((o, k) => (o == null ? o : o[k]), S.data);
+function setAt(p, v) {
+  let t = S.data;
+  for (let i = 0; i < p.length - 1; i++) {
+    if (t[p[i]] == null) t[p[i]] = typeof p[i + 1] === 'number' ? [] : {};
+    t = t[p[i]];
+  }
+  t[p[p.length - 1]] = v;
+}
+
+function buildForm() {
+  const pane = $('formPane');
+  pane.innerHTML = '';
+  if (!S.schema) {
+    pane.innerHTML = '<div class="empty">No schema in this template — nothing to configure.<br>The preview shows the template compiled with empty data.</div>';
+    return;
+  }
+  pane.append(controlFor(deref(S.schema), [], S.schema.title || 'Data', false, true));
+  syncJson();
+}
+
+function label(text, required, hint) {
+  const l = document.createElement('label');
+  l.textContent = text;
+  if (required) l.insertAdjacentHTML('beforeend', ' <span class="req">*</span>');
+  const wrap = document.createDocumentFragment();
+  wrap.append(l);
+  if (hint) { const p = document.createElement('p'); p.className = 'hint'; p.textContent = hint; wrap.append(p); }
+  return wrap;
+}
+
+function controlFor(schema, path, name, required, isRoot) {
+  const s = deref(schema);
+  const type = typeOf(s);
+  const title = s.title || name;
+
+  if (type === 'object' && (s.properties || isRoot)) {
+    const fs = document.createElement('fieldset');
+    const lg = document.createElement('legend');
+    lg.textContent = title;
+    fs.append(lg);
+    if (s.description) fs.insertAdjacentHTML('beforeend', `<p class="hint">${esc(s.description)}</p>`);
+    const req = new Set(s.required || []);
+    for (const [key, sub] of Object.entries(s.properties || {}))
+      fs.append(controlFor(sub, [...path, key], key, req.has(key)));
+    if (isRoot) { fs.style.border = 'none'; fs.style.padding = '0'; lg.remove(); }
+    return fs;
+  }
+
+  if (type === 'array') {
+    const items = deref(s.items || {});
+    const fs = document.createElement('fieldset');
+    fs.insertAdjacentHTML('beforeend', `<legend>${esc(title)}</legend>`);
+    if (s.description) fs.insertAdjacentHTML('beforeend', `<p class="hint">${esc(s.description)}</p>`);
+    const arr = getAt(path) || [];
+    arr.forEach((_, i) => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.append(controlFor(items, [...path, i], `${title} ${i + 1}`));
+      const del = document.createElement('button');
+      del.className = 'mini'; del.textContent = '✕'; del.title = 'Remove';
+      del.onclick = () => { getAt(path).splice(i, 1); buildForm(); render(); };
+      row.append(del);
+      fs.append(row);
+    });
+    const add = document.createElement('button');
+    add.className = 'mini'; add.textContent = '+ Add ' + title;
+    add.style.marginBottom = '8px';
+    add.onclick = () => {
+      if (!Array.isArray(getAt(path))) setAt(path, []);
+      getAt(path).push(defaultFor(items));
+      buildForm(); render();
+    };
+    fs.append(add);
+    return fs;
+  }
+
+  /* scalar */
+  const wrap = document.createElement('div');
+  wrap.className = 'field';
+  const val = getAt(path);
+  let input;
+
+  if (type === 'boolean') {
+    wrap.className = 'field bool';
+    input = el('input', { type: 'checkbox' });
+    input.checked = !!val;
+    wrap.append(input);
+    wrap.append(label(title, required, s.description));
+  } else if (s.enum) {
+    input = document.createElement('select');
+    s.enum.forEach(v => input.add(new Option(String(v), String(v))));
+    input.value = String(val ?? s.enum[0]);
+    wrap.append(label(title, required, s.description), input);
+  } else if (type === 'number' || type === 'integer') {
+    input = el('input', { type: 'number' });
+    if (type === 'integer') input.step = 1;
+    if (s.multipleOf) input.step = s.multipleOf;
+    if (s.minimum != null) input.min = s.minimum;
+    if (s.maximum != null) input.max = s.maximum;
+    input.value = val ?? '';
+    wrap.append(label(title, required, s.description), input);
+  } else {
+    const fmt = (s.format || '').toLowerCase();
+    const multiline = fmt === 'textarea' || fmt === 'multiline' || (s.maxLength || 0) > 120 ||
+                      /html|markdown/.test(s.contentMediaType || '');
+    if (multiline) {
+      input = document.createElement('textarea');
+    } else {
+      const map = { date: 'date', 'date-time': 'datetime-local', time: 'time', email: 'email',
+                    uri: 'url', url: 'url', color: 'color', password: 'password' };
+      input = el('input', { type: map[fmt] || 'text' });
+      if (s.maxLength) input.maxLength = s.maxLength;
+      if (s.pattern) input.pattern = s.pattern;
+      if (s.placeholder) input.placeholder = s.placeholder;
+    }
+    input.value = val ?? '';
+    wrap.append(label(title, required, s.description), input);
+  }
+
+  const read = () => {
+    if (input.type === 'checkbox') return input.checked;
+    if (type === 'number' || type === 'integer') return input.value === '' ? null : Number(input.value);
+    if (s.enum) { const hit = s.enum.find(v => String(v) === input.value); return hit === undefined ? input.value : hit; }
+    return input.value;
+  };
+  input.addEventListener('input', () => { setAt(path, read()); syncJson(); render(); });
+  return wrap;
+}
+
+const el = (tag, props) => Object.assign(document.createElement(tag), props);
+const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ------------------------------------------------------------------ render */
+let timer;
+function render() {
+  clearTimeout(timer);
+  timer = setTimeout(doRender, 60);
+}
+
+function doRender() {
+  if (!S.source) return;
+  let html;
+  try {
+    html = Handlebars.compile(S.source)(S.data);
+    status(S.note);
+  } catch (e) {
+    status('Handlebars: ' + e.message);
+    return;
+  }
+  S.rendered = html;
+  $('saveBtn').disabled = false;
+  $('preview').srcdoc = withLocalAssets(html);
+}
+
+/* point relative src/href at the blob URLs of files the user also selected */
+function withLocalAssets(html) {
+  return html.replace(/\b(src|href)\s*=\s*("([^"]*)"|'([^']*)')/gi, (full, attr, _q, d, sq) => {
+    const v = d ?? sq;
+    if (!v || /^(https?:|data:|blob:|#|mailto:|\/\/)/i.test(v)) return full;
+    const entry = S.files.get(v.split(/[?#]/)[0].split(/[\\/]/).pop().toLowerCase());
+    return entry ? `${attr}="${entry.url}"` : full;
+  });
+}
+
+$('saveBtn').onclick = () => {
+  const a = el('a', { href: URL.createObjectURL(new Blob([S.rendered], { type: 'text/html' })),
+                      download: S.templateName.replace(/\.[^.]+$/, '') + '.rendered.html' });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+
+/* ------------------------------------------------------------- json editor */
+function syncJson() { $('jsonBox').value = JSON.stringify(S.data, null, 2); }
+$('applyJson').onclick = () => {
+  try { S.data = JSON.parse($('jsonBox').value); status(S.note); buildForm(); render(); }
+  catch (e) { status('Data JSON: ' + e.message); }
+};
+
+/* -------------------------------------------------------------- tabs, misc */
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  ['form', 'json', 'schema'].forEach(t => $(t + 'Pane').classList.toggle('on', t === b.dataset.tab));
+});
+
+const sp = $('splitter');
+sp.onmousedown = e => {
+  e.preventDefault();
+  const move = ev => $('panel').style.width = Math.max(220, ev.clientX) + 'px';
+  const up = () => { removeEventListener('mousemove', move); removeEventListener('mouseup', up); };
+  addEventListener('mousemove', move); addEventListener('mouseup', up);
+};
+
+addEventListener('dragover', e => { e.preventDefault(); $('drop').classList.add('on'); });
+addEventListener('dragleave', e => { if (e.relatedTarget === null) $('drop').classList.remove('on'); });
+addEventListener('drop', async e => {
+  e.preventDefault();
+  $('drop').classList.remove('on');
+  const items = [...e.dataTransfer.items];
+  if (items[0]?.getAsFileSystemHandle) {
+    const handles = (await Promise.all(items.map(i => i.getAsFileSystemHandle()))).filter(h => h?.kind === 'file');
+    if (handles.length) return loadHandles(handles);
+  }
+  loadFiles([...e.dataTransfer.files]);
+});
+
+if (!window.Handlebars) status('Could not load Handlebars from the CDN — check your connection, or drop handlebars.min.js next to this file and point the <script> tag at it.');
+</script>
+</body>
+</html>

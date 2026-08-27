@@ -1,0 +1,48 @@
+{
+  "title": "Invoice",
+  "type": "object",
+  "$defs": {
+    "party": {
+      "type": "object",
+      "properties": {
+        "name":  { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "address": { "type": "string", "format": "textarea" }
+      }
+    }
+  },
+  "required": ["number", "issued"],
+  "properties": {
+    "number": { "type": "string", "title": "Invoice #", "default": "INV-1042" },
+    "issued": { "type": "string", "format": "date", "title": "Issue date", "default": "2026-08-17" },
+    "due":    { "type": "string", "format": "date", "title": "Due date", "default": "2026-09-16" },
+    "status": { "type": "string", "enum": ["Draft", "Sent", "Paid", "Overdue"], "default": "Sent" },
+    "from": {
+      "$ref": "#/$defs/party",
+      "title": "From",
+      "default": { "name": "Feature23", "email": "billing@feature23.com", "address": "123 Main St\nColumbus, OH" }
+    },
+    "to": {
+      "$ref": "#/$defs/party",
+      "title": "Bill to",
+      "default": { "name": "Acme Corp", "email": "ap@acme.test", "address": "500 Industrial Way\nDayton, OH" }
+    },
+    "lines": {
+      "title": "Line item",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": { "type": "string", "default": "Consulting" },
+          "hours": { "type": "number", "minimum": 0, "default": 8 },
+          "rate":  { "type": "number", "minimum": 0, "default": 175 }
+        }
+      },
+      "default": [
+        { "description": "Discovery workshop", "hours": 6, "rate": 200 },
+        { "description": "Implementation", "hours": 24, "rate": 175 }
+      ]
+    },
+    "notes": { "type": "string", "format": "textarea", "default": "Net 30. Thanks for your business!" }
+  }
+}
